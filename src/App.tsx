@@ -59,12 +59,67 @@ function App() {
 
   const parseRssFeed = async (url: string) => {
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`無法載入 RSS feed: ${response.statusText}`);
+      // CORS 代理服務列表（按優先順序）
+      const corsProxies = [
+        '', // 先嘗試直接請求
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?',
+        'https://cors-anywhere.herokuapp.com/',
+        'https://cors.bridged.cc/',
+        'https://yacdn.org/proxy/'
+      ];
+
+      let response: Response | null = null;
+      let lastError: Error | null = null;
+
+      // 依序嘗試每個代理
+      for (const proxy of corsProxies) {
+        try {
+          const requestUrl = proxy ? proxy + encodeURIComponent(url) : url;
+          console.log(`嘗試載入 RSS feed: ${proxy ? `使用代理 ${proxy}` : '直接請求'}`);
+          
+          response = await fetch(requestUrl, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+          });
+          
+          if (response.ok) {
+            console.log(`RSS feed 載入成功: ${proxy ? `使用代理 ${proxy}` : '直接請求'}`);
+            break;
+          } else {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+        } catch (error) {
+          console.log(`RSS feed 載入失敗 (${proxy || '直接請求'}):`, error);
+          lastError = error as Error;
+          response = null;
+          continue;
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error('所有載入方法都失敗');
+      }
+
       const text = await response.text();
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(text, 'text/xml');
+      
+      // 檢查是否有解析錯誤
+      const parseError = xmlDoc.querySelector('parsererror');
+      if (parseError) {
+        throw new Error('RSS feed 格式錯誤');
+      }
+
       const items = xmlDoc.querySelectorAll('item');
+      
+      if (items.length === 0) {
+        throw new Error('RSS feed 中沒有找到任何集數');
+      }
+
       const parsedEpisodes: Episode[] = Array.from(items).map((item, index) => {
         const title = item.querySelector('title')?.textContent || `EP${index + 1}`;
         const pubDate = item.querySelector('pubDate')?.textContent || '';
@@ -78,10 +133,12 @@ function App() {
           audioUrl,
         };
       });
+      
       setEpisodes(parsedEpisodes);
+      console.log(`成功解析 ${parsedEpisodes.length} 個集數`);
     } catch (error) {
       console.error('解析 RSS feed 時發生錯誤:', error);
-      alert('解析 RSS feed 失敗，請確認連結是否正確。');
+      alert(`解析 RSS feed 失敗：${error instanceof Error ? error.message : '未知錯誤'}\n\n請確認連結是否正確，或稍後再試。`);
     }
   };
 
